@@ -1,0 +1,575 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// 1. User & Career Preferences
+// ==========================================
+
+model UserProfile {
+  id              String             @id @default(uuid())
+  email           String             @unique
+  fullName        String
+  headline        String?
+  location        String?
+  portfolioUrl    String?
+  githubUrl       String?
+  linkedinUrl     String?
+  leetcodeUrl     String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  preferences     CareerPreferences?
+  evidenceFacts   EvidenceFact[]
+  resumes         ResumeDocument[]
+  connectedAccts  ConnectedAccount[]
+  applications    JobApplication[]
+  outreachDrafts  OutreachDraft[]
+  linkedInDrafts  LinkedInContentDraft[]
+  repoWatches     RepositoryWatch[]
+  contributions   ContributionTask[]
+  skillGaps       SkillGap[]
+  scheduledTasks  ScheduledTask[]
+  approvalReqs    ApprovalRequest[]
+  auditEvents     AuditEvent[]
+  notifications   Notification[]
+}
+
+model CareerPreferences {
+  id                String       @id @default(uuid())
+  userId            String       @unique
+  user              UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  targetRoles       String[]     // e.g. ["Software Engineer Intern", "Backend Engineer"]
+  targetLocations   String[]     // e.g. ["Remote", "Bengaluru", "India"]
+  workModes         String[]     // e.g. ["REMOTE", "HYBRID", "ON_SITE"]
+  graduationYear    Int?         // Verified graduation year
+  workAuthorization String?
+  minStipendMonthly Int?
+  excludedCompanies String[]     // e.g. ["CompanyX"]
+  version           Int          @default(1)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
+
+// ==========================================
+// 2. Evidence Vault & Resumes
+// ==========================================
+
+model EvidenceFact {
+  id                 String       @id @default(uuid())
+  userId             String
+  user               UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  factType           String       // PROJECT_METRIC, SKILL, CERTIFICATION, EDUCATION, OPEN_SOURCE
+  title              String
+  claimValue         String       // Detailed description/metric
+  sourceType         String       // GITHUB_REPO, CERTIFICATE_URL, LIVE_DEMO, TRANSCRIPT
+  sourceUrl          String?
+  sourceLocator      String?      // commit hash, line number, or doc section
+  verificationStatus String       @default("VERIFIED") // VERIFIED, RESUME_REPORTED, UNVERIFIED, CONFLICTING
+  confidenceScore    Float        @default(1.0)
+  capturedAt         DateTime     @default(now())
+  lastVerifiedAt     DateTime     @default(now())
+  userConfirmedAt    DateTime?
+
+  linkedDrafts       LinkedInContentDraft[]
+  resumeVersions     ResumeVersion[]
+
+  @@index([userId, verificationStatus])
+  @@index([factType])
+}
+
+model ResumeDocument {
+  id              String          @id @default(uuid())
+  userId          String
+  user            UserProfile     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fileName        String
+  storagePath     String          // OS-protected local private storage, never in public/
+  fileChecksum    String          // SHA-256 of binary
+  mimeType        String          @default("application/pdf")
+  isBase          Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  versions        ResumeVersion[]
+
+  @@index([userId, isBase])
+}
+
+model ResumeVersion {
+  id              String          @id @default(uuid())
+  resumeDocId     String
+  resumeDoc       ResumeDocument  @relation(fields: [resumeDocId], references: [id], onDelete: Cascade)
+  versionLabel    String          // e.g. "v1.2-backend-intern"
+  targetRoleType  String
+  markdownContent String?
+  isApproved      Boolean         @default(false)
+  createdAt       DateTime        @default(now())
+
+  evidenceFacts   EvidenceFact[]
+  jobApplications JobApplication[]
+
+  @@index([resumeDocId])
+}
+
+// ==========================================
+// 3. Connected Accounts & Security
+// ==========================================
+
+model ConnectedAccount {
+  id                   String       @id @default(uuid())
+  userId               String
+  user                 UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider             String       // GITHUB, GMAIL, LINKEDIN
+  externalAccountId    String
+  encryptedAccessToken String?      // Encrypted via AES-256-GCM
+  encryptedRefreshToken String?     // Encrypted via AES-256-GCM
+  tokenIv              String?      // Initialization vector
+  tokenAuthTag         String?      // GCM auth tag
+  grantedScopes        String[]     // Array of granted OAuth scopes
+  connectionState      String       @default("CONNECTED") // CONNECTED, EXPIRED, REVOKED, DISCONNECTED
+  integrationMode      String       @default("DEMO") // DEMO, REAL_CONNECTED_READ_ONLY, REAL_DRAFT_ONLY, REAL_APPROVAL_REQUIRED, REAL_WRITE_ENABLED
+  expiresAt            DateTime?
+  lastSyncAt           DateTime?
+  lastErrorCategory    String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@unique([provider, externalAccountId])
+  @@index([userId, provider])
+}
+
+// ==========================================
+// 4. Job Discovery & Applications
+// ==========================================
+
+model JobSource {
+  id            String       @id @default(uuid())
+  name          String       // GREENHOUSE_PUBLIC, LEVER_PUBLIC, ASHBY_PUBLIC, COMPANY_SITE
+  feedUrl       String?
+  isActive      Boolean      @default(true)
+  lastPolledAt  DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  openings      JobOpening[]
+}
+
+model JobOpening {
+  id              String           @id @default(uuid())
+  sourceId        String?
+  source          JobSource?       @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  canonicalUrl    String           @unique
+  companyName     String
+  roleTitle       String
+  location        String
+  workMode        String           @default("REMOTE") // REMOTE, HYBRID, ON_SITE
+  roleType        String           @default("INTERN") // INTERN, FULL_TIME, CONTRACT
+  description     String?
+  postedAt        DateTime?
+  expiresAt       DateTime?
+  dedupeHash      String           @unique
+  status          String           @default("ACTIVE") // ACTIVE, STALE, EXPIRED, SUSPICIOUS
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  matches         JobMatch[]
+  applications    JobApplication[]
+  contacts        RecruiterContact[]
+  outreachDrafts  OutreachDraft[]
+
+  @@index([companyName, roleTitle])
+  @@index([status])
+}
+
+model JobMatch {
+  id               String       @id @default(uuid())
+  jobOpeningId     String
+  jobOpening       JobOpening   @relation(fields: [jobOpeningId], references: [id], onDelete: Cascade)
+  overallFitScore  Float        // 0.0 to 100.0
+  roleScore        Float
+  skillsScore      Float
+  eligibilityScore Float
+  recencyScore     Float
+  matchedSkills    String[]
+  missingSkills    String[]
+  rationale        String
+  createdAt        DateTime     @default(now())
+
+  @@index([jobOpeningId])
+  @@index([overallFitScore])
+}
+
+model JobApplication {
+  id               String          @id @default(uuid())
+  userId           String
+  user             UserProfile     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobOpeningId     String
+  jobOpening       JobOpening      @relation(fields: [jobOpeningId], references: [id], onDelete: Cascade)
+  resumeVersionId  String?
+  resumeVersion    ResumeVersion?  @relation(fields: [resumeVersionId], references: [id], onDelete: SetNull)
+  stage            String          @default("DISCOVERED") // DISCOVERED, SHORTLISTED, DRAFTING, READY_FOR_REVIEW, APPROVED, APPLIED, INTERVIEW, OFFER, REJECTED, WITHDRAWN
+  submissionDate   DateTime?
+  portalUrl        String?
+  notes            String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@unique([userId, jobOpeningId])
+  @@index([userId, stage])
+}
+
+// ==========================================
+// 5. Network & Outreach
+// ==========================================
+
+model RecruiterContact {
+  id                 String           @id @default(uuid())
+  jobOpeningId       String?
+  jobOpening         JobOpening?      @relation(fields: [jobOpeningId], references: [id], onDelete: SetNull)
+  fullName           String
+  companyName        String
+  title              String
+  email              String?
+  linkedinProfileUrl String?
+  provenanceUrl      String           // Verified public source URL
+  verificationState  String           @default("UNVERIFIED") // VERIFIED_PUBLIC, UNVERIFIED, BOUNCED
+  isDoNotContact     Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  outreachDrafts     OutreachDraft[]
+
+  @@index([companyName])
+  @@index([email])
+}
+
+model NetworkLead {
+  id                 String       @id @default(uuid())
+  fullName           String
+  currentOrg         String
+  roleTitle          String
+  profileUrl         String
+  domainFocus        String       // e.g. Distributed Systems, ML Infrastructure
+  relevanceRationale String
+  provenanceSource   String
+  category           String       @default("ENGINEER_MAINTAINER") // ENGINEER_MAINTAINER, ALUMNI, RECRUITER_TALENT, HIRING_MANAGER, EMBEDDED_HARDWARE
+  connectionNote     String?
+  notes              String?
+  followUpDate       DateTime?
+  matchScore         Int          @default(85)
+  sharedTechnicalReason String?
+  lastVerifiedAt     DateTime     @default(now())
+  connectionState    String       @default("IDENTIFIED") // IDENTIFIED, DRAFTED, CONNECTED, UNRESPONSIVE
+  lastContactedAt    DateTime?
+  isDoNotContact     Boolean      @default(false)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@index([domainFocus])
+  @@index([category])
+  @@index([isDoNotContact])
+  @@index([connectionState])
+}
+
+model OutreachDraft {
+  id               String            @id @default(uuid())
+  userId           String
+  user             UserProfile       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contactId        String?
+  contact          RecruiterContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  jobOpeningId     String?
+  jobOpening       JobOpening?       @relation(fields: [jobOpeningId], references: [id], onDelete: SetNull)
+  channel          String            @default("GMAIL") // GMAIL, LINKEDIN_MANUAL
+  subject          String?
+  bodyText         String
+  dedupeKey        String            @unique
+  status           String            @default("DRAFT") // RESEARCH, DRAFT, NEEDS_REVIEW, APPROVED, SENT, REPLIED, FAILED, BLOCKED
+  approvalId       String?
+  sentAt           DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  events           OutreachEvent[]
+
+  @@index([userId, status])
+}
+
+model OutreachEvent {
+  id              String         @id @default(uuid())
+  draftId         String
+  draft           OutreachDraft  @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  eventType       String         // CREATED, APPROVED, DISPATCHED, REPLIED, BOUNCED, BLOCKED
+  metadataJson    String?
+  createdAt       DateTime       @default(now())
+
+  @@index([draftId])
+}
+
+// ==========================================
+// 6. LinkedIn Content Studio
+// ==========================================
+
+model LinkedInContentDraft {
+  id                  String         @id @default(uuid())
+  userId              String
+  user                UserProfile    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic               String
+  targetAudience      String
+  postContent         String
+  hashtags            String[]
+  status              String         @default("DRAFT") // DRAFT, NEEDS_REVIEW, APPROVED, PUBLISHED_MANUAL, PUBLISHED_API
+  publishedUrl        String?
+  approvalHash        String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  evidenceFacts       EvidenceFact[]
+
+  @@index([userId, status])
+}
+
+// ==========================================
+// 7. GitHub Lab & Contributions
+// ==========================================
+
+model RepositoryWatch {
+  id               String               @id @default(uuid())
+  userId           String
+  user             UserProfile          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repoFullName     String               @unique // e.g. "owner/repo"
+  repoUrl          String
+  isOwned          Boolean              @default(false)
+  isFork           Boolean              @default(false)
+  defaultBranch    String               @default("main")
+  primaryLanguage  String?
+  topics           String[]
+  starsCount       Int                  @default(0)
+  forksCount       Int                  @default(0)
+  openIssuesCount  Int                  @default(0)
+  licenseSpdx      String?
+  hasContributing  Boolean              @default(false)
+  lastSyncedAt     DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  snapshots        RepositorySnapshot[]
+  issueCandidates  IssueCandidate[]
+  contributionTasks ContributionTask[]
+
+  @@index([userId, repoFullName])
+}
+
+model RepositorySnapshot {
+  id            String          @id @default(uuid())
+  repoWatchId   String
+  repoWatch     RepositoryWatch @relation(fields: [repoWatchId], references: [id], onDelete: Cascade)
+  commitSha     String
+  snapshotMeta  String?         // Serialized JSON with health indicators
+  capturedAt    DateTime        @default(now())
+
+  @@index([repoWatchId])
+}
+
+model IssueCandidate {
+  id                 String             @id @default(uuid())
+  repoWatchId        String
+  repoWatch          RepositoryWatch    @relation(fields: [repoWatchId], references: [id], onDelete: Cascade)
+  issueNumber        Int
+  issueUrl           String             @unique
+  title              String
+  bodySummary        String?
+  labels             String[]
+  isOpen             Boolean            @default(true)
+  suitabilityScore   Float              // 0.0 to 100.0
+  scoreRationale     String
+  complexityEstimate String             // LOW, MEDIUM, HIGH
+  isAssigned         Boolean            @default(false)
+  status             String             @default("DISCOVERED") // DISCOVERED, ACCEPTED, REJECTED, STALE
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  contributionTasks  ContributionTask[]
+
+  @@index([repoWatchId, isOpen])
+  @@index([suitabilityScore])
+}
+
+model ContributionTask {
+  id                 String             @id @default(uuid())
+  userId             String
+  user               UserProfile        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repoWatchId        String
+  repoWatch          RepositoryWatch    @relation(fields: [repoWatchId], references: [id], onDelete: Cascade)
+  issueCandidateId   String?
+  issueCandidate     IssueCandidate?    @relation(fields: [issueCandidateId], references: [id], onDelete: SetNull)
+  branchName         String             // e.g. "fix/issue-123"
+  contributionPlan   String?            // Step-by-step implementation plan
+  patchDiff          String?            // Unified git diff
+  diffHash           String?            // SHA-256 of patchDiff
+  status             String             @default("PLANNED") // CANDIDATE, INVESTIGATING, PLANNED, SANDBOX_CREATED, PATCH_READY, TESTING, TESTS_PASSED, TESTS_FAILED, NEEDS_REVIEW, APPROVED_FOR_REMOTE_WRITE, PR_OPENED, MERGED, CLOSED, BLOCKED, DISCARDED
+  approvalId         String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  sandboxRuns        SandboxRun[]
+  pullRequests       PullRequestRecord[]
+
+  @@index([userId, status])
+}
+
+model SandboxRun {
+  id                 String           @id @default(uuid())
+  contributionTaskId String
+  contributionTask   ContributionTask @relation(fields: [contributionTaskId], references: [id], onDelete: Cascade)
+  commandExecuted    String
+  exitCode           Int
+  stdoutSnippet      String?
+  stderrSnippet      String?
+  durationMs         Int
+  createdAt          DateTime         @default(now())
+
+  @@index([contributionTaskId])
+}
+
+model PullRequestRecord {
+  id                 String           @id @default(uuid())
+  contributionTaskId String
+  contributionTask   ContributionTask @relation(fields: [contributionTaskId], references: [id], onDelete: Cascade)
+  prNumber           Int
+  prUrl              String           @unique
+  baseBranch         String
+  headBranch         String
+  title              String
+  bodyMarkdown       String
+  isMerged           Boolean          @default(false)
+  remoteStatus       String           @default("OPEN") // OPEN, MERGED, CLOSED
+  mergedAt           DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  @@index([contributionTaskId])
+}
+
+// ==========================================
+// 8. Interview Prep & Skill Gaps
+// ==========================================
+
+model SkillGap {
+  id                 String            @id @default(uuid())
+  userId             String
+  user               UserProfile       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillName          String
+  category           String            // CORE_LANGUAGE, SYSTEM_DESIGN, FRAMEWORK, CLOUD, DSA
+  requirementLevel   String            // REQUIRED, PREFERRED
+  currentMastery     String            @default("BEGINNER") // NONE, BEGINNER, INTERMEDIATE, ADVANCED
+  evidenceStatus     String            @default("UNVERIFIED") // UNVERIFIED, PRACTICING, VERIFIED
+  practicePlan       String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  practiceSessions   PracticeSession[]
+
+  @@unique([userId, skillName])
+  @@index([userId, evidenceStatus])
+}
+
+model PracticeSession {
+  id              String       @id @default(uuid())
+  skillGapId      String
+  skillGap        SkillGap     @relation(fields: [skillGapId], references: [id], onDelete: Cascade)
+  sessionType     String       // LEETCODE, MOCK_INTERVIEW, PROJECT_BUILD, SYSTEM_DESIGN
+  notes           String
+  durationMinutes Int
+  completedAt     DateTime     @default(now())
+
+  @@index([skillGapId])
+}
+
+// ==========================================
+// 9. Operations, Approvals & Auditing
+// ==========================================
+
+model ScheduledTask {
+  id              String       @id @default(uuid())
+  userId          String
+  user            UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  cronExpression  String
+  taskType        String       // JOB_SWEEP, GITHUB_SYNC, WEEKLY_DIGEST, HEALTH_CHECK
+  isEnabled       Boolean      @default(true)
+  lastRunAt       DateTime?
+  nextRunAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  taskRuns        TaskRun[]
+
+  @@index([userId, isEnabled])
+}
+
+model TaskRun {
+  id              String        @id @default(uuid())
+  scheduledTaskId String
+  scheduledTask   ScheduledTask @relation(fields: [scheduledTaskId], references: [id], onDelete: Cascade)
+  status          String        // SUCCESS, FAILED, TIMEOUT
+  resultSummary   String?
+  durationMs      Int
+  runAt           DateTime      @default(now())
+
+  @@index([scheduledTaskId])
+}
+
+model ApprovalRequest {
+  id                 String       @id @default(uuid())
+  userId             String
+  user               UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actionType         String       // SEND_EMAIL, PUBLISH_LINKEDIN, GIT_PUSH, OPEN_PR, APPLY_JOB
+  targetResourceId   String
+  targetResourceName String
+  contentHash        String       // SHA-256 of payload / patch
+  consequenceSummary String
+  status             String       @default("PENDING") // PENDING, APPROVED, REJECTED, EXPIRED, REVOKED
+  requestedAt        DateTime     @default(now())
+  expiresAt          DateTime
+  approvedAt         DateTime?
+  approverIp         String?
+
+  @@index([userId, status])
+  @@index([contentHash])
+}
+
+model AuditEvent {
+  id                 String       @id @default(uuid())
+  userId             String
+  user               UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actorType          String       @default("USER") // USER, AGENT, SYSTEM
+  moduleName         String       // AUTH, OUTREACH, GITHUB_LAB, JOBS, APPROVAL, CONTENT
+  actionName         String
+  targetResource     String?
+  status             String       // SUCCESS, FAILURE, BLOCKED, WARNING
+  detailsRedacted    String?      // Structured JSON with all PII and secrets redacted
+  ipAddress          String?
+  timestamp          DateTime     @default(now())
+
+  @@index([userId, timestamp])
+  @@index([moduleName, actionName])
+}
+
+model Notification {
+  id          String       @id @default(uuid())
+  userId      String
+  user        UserProfile  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  message     String
+  type        String       @default("INFO") // INFO, WARNING, SUCCESS, APPROVAL_REQUIRED
+  isRead      Boolean      @default(false)
+  linkUrl     String?
+  createdAt   DateTime     @default(now())
+
+  @@index([userId, isRead])
+}

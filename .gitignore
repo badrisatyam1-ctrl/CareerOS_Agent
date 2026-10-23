@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+# Environment variables and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+*.cert
+*.token
+tokens/
+credentials.json
+client_secret*.json
+
+# Private user data and resume storage (Hard Security Rule)
+private-data/
+*.pdf
+secrets/
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Antigravity internal runtime artifacts (keep workspace clean)
+.gemini/
